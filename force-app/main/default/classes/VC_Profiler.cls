@@ -1,21 +1,32 @@
 /*
  * Copyright (c) 2025 Vaughan Crole vc@vaughancrole.com
- * 
- * Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), 
- * to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, 
- * sublicense, and/ or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, 
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
+ * sublicense, and/ or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
  * subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
- * 
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF 
- * MERCHANTABILITY,  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE 
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY,  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
  * FOR ANY CLAIM, DAMAGES OR OTHER  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
  * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- * 
+ *
  */
 public without sharing class VC_Profiler
 {
+	// ************************************************************************************
+	// *** Member vars:
+	private Map<String, currentLimit> LimitMeasurements;
+	private Map<String, limitsSpent>  LimitsSpend;
+	private String objName;
+	private String triggerOp;
+	private Integer measurementCount = -1;
+
+
+	// ************************************************************************************
+	// *** Constructor:
 	public VC_Profiler(String argObjName, String triggerOperation)
 	{
 		// System.debug(argObjName + ': ' + triggerOperation);
@@ -23,24 +34,20 @@ public without sharing class VC_Profiler
 		objName   = argObjName;
 		triggerOp = 'Trigger.' + argObjName + '.' + triggerOperation;
 
-		recordLimitStart(triggerOp, null);
+		recordLimitStart(triggerOp);
 	}
-
-	private Map<String, currentLimit> LimitMeasurements;
-	private Map<String, limitsSpent>  LimitsSpend;
-	private String objName;
-	private String triggerOp;
 
 
 	// ************************************************************************************
 	// *** Instructions:
-	//
-	// At start of trigger op, construct instance
+
+	// At start of trigger op, construct instance and optionally count the number of records
 	// 		VC_Profiler profiler = new VC_Profiler('Incident', 'BeforeUpdate');
+	// 		profiler.countTriger(newSObjs);
 
 	// then, before each calling method
 	//		profiler.measureStart('methodNameA');
-	
+
 	// and, after each calling method
 	//		profiler.measureStop('methodNameA');
 
@@ -57,52 +64,22 @@ public without sharing class VC_Profiler
 
 	// ************************************************************************************
 	// *** Limits methods:
-
-	public static Integer getDMLRowsLeft()
+	public void measureStart(String methodName)
 	{
-		return Limits.getLimitDMLRows() - Limits.getDMLRows();
+		recordLimitStart(objName + '.' + methodName);
 	}
 
-	public static Integer getQueryRowsLeft()
+	public limitsSpent measureStop(String methodName)
 	{
-		return Limits.getLimitQueryRows() - Limits.getQueryRows();
+		return recordLimitEnd(objName + '.' + methodName);
 	}
 
-	public static Integer getDMLStatementsLeft()
+	public limitsSpent endMeasure()
 	{
-		return Limits.getLimitDMLStatements() - Limits.getDMLStatements();
+		return recordLimitEnd(triggerOp);
 	}
 
-	public static Integer getQueriesLeft()
-	{
-		return Limits.getLimitQueries() - Limits.getQueries();
-	}
-
-	public static Integer getFutureCallsLeft()
-	{
-		return Limits.getLimitFutureCalls() - Limits.getFutureCalls();
-	}
-
-	public static currentLimit getMeasure()
-	{
-		return getMeasure(null);
-	}
-
-	public static currentLimit getMeasure(Integer idx)
-	{
-		currentLimit cl = new currentLimit();
-		cl.dmlRowsLeft = getDMLRowsLeft();
-		cl.dmlStatementsLeft = getDMLStatementsLeft();
-		cl.queryRowsLeft = getQueryRowsLeft();
-		cl.queriesLeft = getQueriesLeft();
-		cl.futureCallsLeft = getFutureCallsLeft();
-
-		if (idx != null) cl.index = idx;
-
-		return cl;
-	}
-
-	private void recordLimitStart(String key, Integer index)
+	private void recordLimitStart(String key)
 	{
 		if (LimitMeasurements == null)
 			LimitMeasurements = new Map<String, currentLimit>();
@@ -110,10 +87,13 @@ public without sharing class VC_Profiler
 		if (LimitMeasurements.containsKey(key))
 		{
 			// warning?
+			// This becomes a problem if recursion occurs
 		}
 
-		System.debug('VC_Profiler Measurement start: ' + key);
-		LimitMeasurements.put(key, getMeasure(index));
+		Integer count = ++measurementCount;
+
+		System.debug('VC_Profiler Measurement start: ' + key + ' ('+count+')');
+		LimitMeasurements.put(key, getMeasure(count));
 	}
 
 	private limitsSpent recordLimitEnd(String key)
@@ -144,24 +124,59 @@ public without sharing class VC_Profiler
 		return spend;
 	}
 
-	public void measureStart(String methodName)
+	public static currentLimit getMeasure() { return getMeasure(null); }
+	public static currentLimit getMeasure(Integer index)
 	{
-		measureStart(methodName, null);
+		currentLimit cl      = new currentLimit();
+		cl.dmlRowsLeft       = getDMLRowsLeft();
+		cl.dmlStatementsLeft = getDMLStatementsLeft();
+		cl.queryRowsLeft     = getQueryRowsLeft();
+		cl.queriesLeft       = getQueriesLeft();
+		cl.futureCallsLeft   = getFutureCallsLeft();
+
+		if (index != null) cl.index = index;
+
+		return cl;
 	}
 
-	public void measureStart(String methodName, Integer index)
+
+	// ************************************************************************************
+	// *** Helper methods:
+	public void countTrigger(List<SObject> newSObjs)
 	{
-		recordLimitStart(objName + '.' + methodName, index);
+		if (newSObjs == null) return;
+		LimitMeasurements.get(triggerOp).triggerSize = newSObjs.size();
 	}
 
-	public limitsSpent measureStop(String methodName)
+	public void countTrigger(Map<Id, SObject> newSObjs)
 	{
-		return recordLimitEnd(objName + '.' + methodName);
+		if (newSObjs == null) return;
+		LimitMeasurements.get(triggerOp).triggerSize = newSObjs.size();
 	}
 
-	public limitsSpent endMeasure()
+	public static Integer getDMLRowsLeft()
 	{
-		return recordLimitEnd(triggerOp);
+		return Limits.getLimitDMLRows() - Limits.getDMLRows();
+	}
+
+	public static Integer getQueryRowsLeft()
+	{
+		return Limits.getLimitQueryRows() - Limits.getQueryRows();
+	}
+
+	public static Integer getDMLStatementsLeft()
+	{
+		return Limits.getLimitDMLStatements() - Limits.getDMLStatements();
+	}
+
+	public static Integer getQueriesLeft()
+	{
+		return Limits.getLimitQueries() - Limits.getQueries();
+	}
+
+	public static Integer getFutureCallsLeft()
+	{
+		return Limits.getLimitFutureCalls() - Limits.getFutureCalls();
 	}
 
 	public static void debugLimits()
@@ -169,6 +184,9 @@ public without sharing class VC_Profiler
 		System.debug(JSON.serializePretty(getMeasure()));
 	}
 
+
+	// ************************************************************************************
+	// *** Custom Classes:
 	public class currentLimit
 	{
 		public Integer index;
@@ -177,6 +195,7 @@ public without sharing class VC_Profiler
 		public Integer queryRowsLeft     = 0;
 		public Integer queriesLeft       = 0;
 		public Integer futureCallsLeft   = 0;
+		public Integer triggerSize;
 	}
 
 	public class limitsSpent
@@ -204,6 +223,13 @@ public without sharing class VC_Profiler
 		public Integer queryRows     = 0;
 		public Integer queries       = 0;
 		public Integer futureCalls   = 0;
+	}
+
+	// ************************************************************************************
+	// *** Crazy shit down here:
+	private static void someMethod()
+	{
+		System.debug('get out');
 	}
 
 
